@@ -1,12 +1,12 @@
 import math
 
-immutables["pi"] = 3.14159
-immutables["e"] = 2.71828
-immutables["y"] = 0.57721
-immutables["gr"] = 1.618
-immutables["c"] = 29979
-immutables["g"] = 6.6743
-immutables["h"] = 1.0545
+immutables["+pi"] = 3.14159
+immutables["+e"] = 2.71828
+immutables["+y"] = 0.57721
+immutables["+gr"] = 1.618
+immutables["+c"] = 29979
+immutables["+g"] = 6.6743
+immutables["+h"] = 1.0545
 
 def handle_amath(parts):
     global instruction_pointer, stacks, curstack, registers
