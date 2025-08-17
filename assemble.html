@@ -252,7 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (src === 'IX') return [[0xDD, 0xF9], 2];
                     if (src === 'IY') return [[0xFD, 0xF9], 2];
                 }
-                if (dest in reg_map_8bit && src.startsWith('(') && src.endsWith(')') && src.includes('IX') || src.includes('IY')) {
+                if (dest in reg_map_8bit && src.startsWith('(') && src.endsWith(')') && (src.includes('IX') || src.includes('IY'))) {
                     const m = src.slice(1, -1).match(/(IX|IY)([+-]\d+)/);
                     if (m) {
                         const idx_reg = m[1];
@@ -376,7 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const addr = parse_expr(operands, location_counter, pass_num);
                 const valid_rst_addrs = [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38];
                 if (!valid_rst_addrs.includes(addr)) {
-                    throw new Error(`Invalid restart address for RST: ${hex(addr)}`);
+                    throw new Error(`Invalid restart address for RST: ${addr.toString(16)}`);
                 }
                 const opcode = 0xC7 | addr;
                 return [[opcode], 1];
@@ -419,7 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const line_match = line.match(/^\s*(?:(\w+):)?\s*(?:(\w+))?\s*(.*)$/i);
             if (!line_match) continue;
             
-            let [_, label, mnemonic, operands] = line_match.groups();
+            let [_, label, mnemonic, operands] = line_match;
             if (label) label = label.toUpperCase();
             if (mnemonic) mnemonic = mnemonic.toUpperCase();
             if (operands) operands = operands.trim();
