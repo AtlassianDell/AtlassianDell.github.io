@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Z80 Assembler Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .mono {
+            font-family: 'Courier New', Courier, monospace;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-300">
+
+<div class="container mx-auto p-4 md:p-8">
+    <div class="flex flex-col md:flex-row gap-8">
+        <!-- Code Editor Section -->
+        <div class="md:w-1/2 w-full bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+            <div class="bg-gray-200 dark:bg-gray-700 p-4 font-bold text-lg rounded-t-lg">
+                Z80 Source Code
+            </div>
+            <div class="p-4">
+                <textarea id="source-code" rows="20" class="w-full h-96 p-4 text-sm mono bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors duration-300" spellcheck="false">
+; Z80 Assembly Example
+; This program loads a value into a register,
+; and then jumps to a label.
+; It also defines some data and a symbol.
+
+START:  LD A, $12    ; Load hex value 12 into A
+        LD B, 45     ; Load decimal 45 into B
+        LD HL, MESSAGE_START
+        LD (HL), 'T' ; Change the first character of the message
+        CALL SUBROUTINE
+        JR Z, JUMP_TARGET ; Conditional relative jump
+        JR START      ; Unconditional relative jump
+        HALT
+
+MESSAGE_START:
+        DEFM "Hello World"
+        DB 0x0A, 0x00 ; Newline and null terminator
+
+JUMP_TARGET:
+        NOP
+        INC BC
+        PUSH AF
+        POP DE
+        RET
+
+SUBROUTINE:
+        LD (HL), 0xEE
+        JR JUMP_TARGET
+        RET
+        
+DATA_SIZE EQU 16    ; Define a constant symbol
+DEFS DATA_SIZE, 0FFh ; Reserve 16 bytes, filled with FF
+</textarea>
+                <div class="flex justify-end mt-4">
+                    <button id="assemble-button" class="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        Assemble
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Output Section -->
+        <div class="md:w-1/2 w-full bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+            <div class="bg-gray-200 dark:bg-gray-700 p-4 font-bold text-lg rounded-t-lg">
+                Assembly Output
+            </div>
+            <div class="p-4">
+                <h3 class="font-bold mb-2">Symbol Table</h3>
+                <div class="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border border-gray-300 dark:border-gray-600 h-40 overflow-auto mono text-sm mb-4">
+                    <pre id="symbol-table-output"></pre>
+                </div>
+
+                <h3 class="font-bold mb-2">Machine Code</h3>
+                <div class="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border border-gray-300 dark:border-gray-600 h-40 overflow-auto mono text-sm mb-4">
+                    <pre id="machine-code-output"></pre>
+                </div>
+
+                <h3 class="font-bold mb-2">Log</h3>
+                <div class="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border border-gray-300 dark:border-gray-600 h-40 overflow-auto mono text-sm text-red-500 dark:text-red-400">
+                    <pre id="log-output"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Port of the Python logic
+    let symbol_table = {};
+
+    const reg_map_8bit = {
+        'B': 0b000, 'C': 0b001, 'D': 0b010, 'E': 0b011,
+        'H': 0b100, 'L': 0b101, 'F': 0b110, 'A': 0b111,
+    };
+    const reg_map_16bit = {
+        'BC': 0b00, 'DE': 0b01, 'HL': 0b10, 'SP': 0b11
+    };
+    const reg_map_16bit_push_pop = {
+        'BC': 0b00, 'DE': 0b01, 'HL': 0b10, 'AF': 0b11
+    };
+    const ix_iy_map = {'IX': 0xDD, 'IY': 0xFD};
+    const rel_jump_cond_map = {
+        'NZ': 0b000, 'Z': 0b001, 'NC': 0b010, 'C': 0b011
+    };
+    const abs_jump_cond_map = {
+        'NZ': 0b000, 'Z': 0b001, 'NC': 0b010, 'C': 0b011,
+        'PO': 0b100, 'PE': 0b101, 'P': 0b110, 'M': 0b111
+    };
+    
+    // UI elements
+    const sourceCodeElem = document.getElementById('source-code');
+    const assembleButton = document.getElementById('assemble-button');
+    const symbolTableOutput = document.getElementById('symbol-table-output');
+    const machineCodeOutput = document.getElementById('machine-code-output');
+    const logOutput = document.getElementById('log-output');
+
+    /**
+     * Parses an expression from a string.
+     * @param {string} expr The expression to parse.
+     * @param {number} location_counter The current location counter.
+     * @param {number} pass_num The current assembly pass number (1 or 2).
+     * @returns {number} The evaluated integer value of the expression.
+     * @throws {Error} If the expression is invalid or a symbol is undefined in pass 2.
+     */
+    function parse_expr(expr, location_counter, pass_num) {
+        const original_expr = expr.trim();
+        if (!original_expr) {
+            throw new Error("Empty expression where a value was expected.");
+        }
+
+        const expr_upper = original_expr.toUpperCase().replace(/#/g, location_counter.toString());
+
+        const resolved_expr = expr_upper.replace(/\b[A-Z_][A-Z0-9_]*\b|\$[0-9A-F]+|%[01]+|'.'/g, (part) => {
+            if (part.startsWith('$')) {
+                return parseInt(part.substring(1), 16).toString();
+            } else if (part.startsWith('%')) {
+                return parseInt(part.substring(1), 2).toString();
+            } else if (part.startsWith("'") && part.endsWith("'")) {
+                if (part.length === 3) {
+                    return part.charCodeAt(1).toString();
+                } else {
+                    throw new Error(`Invalid character literal: ${part}`);
+                }
+            } else if (part.match(/^[A-Z_][A-Z0-9_]*$/)) {
+                if (symbol_table.hasOwnProperty(part)) {
+                    return symbol_table[part].toString();
+                } else {
+                    if (pass_num === 2) {
+                        throw new Error(`Undefined symbol: '${part}' in expression '${original_expr}'`);
+                    }
+                    return '0'; // Return a placeholder value during pass 1
+                }
+            }
+            return part;
+        });
+
+        try {
+            // Using a Function constructor for safe evaluation
+            return Function(`'use strict'; return (${resolved_expr})`)();
+        } catch (e) {
+            if (pass_num === 2) {
+                throw new Error(`Error evaluating expression '${original_expr}' after symbol resolution. Resolved to: '${resolved_expr}'. Error: ${e.message}`);
+            }
+            return 0;
+        }
+    }
+
+    /**
+     * Assembles a single line of Z80 assembly code into machine code.
+     * @param {string} mnemonic The instruction mnemonic.
+     * @param {string} operands The instruction operands.
+     * @param {number} location_counter The current location counter.
+     * @param {number} pass_num The current assembly pass number.
+     * @returns {Array} An array containing the opcodes and the size of the instruction.
+     * @throws {Error} If the mnemonic or operands are invalid.
+     */
+    function get_opcode(mnemonic, operands, location_counter, pass_num) {
+        if (!operands) operands = '';
+        const parts = operands.split(',').map(p => p.trim().toUpperCase());
+        const num_parts = parts.length;
+        
+        switch (mnemonic) {
+            case 'LD':
+                if (num_parts !== 2) throw new Error("LD requires two operands.");
+                const [dest, src] = parts;
+
+                if (reg_map_8bit.hasOwnProperty(dest) && reg_map_8bit.hasOwnProperty(src)) {
+                    const r = reg_map_8bit[dest];
+                    const r_prime = reg_map_8bit[src];
+                    return [[0b01000000 | (r << 3) | r_prime], 1];
+                }
+                if (reg_map_8bit.hasOwnProperty(dest)) {
+                    const val = parse_expr(src, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 2];
+                    return [[0b00000110 | (reg_map_8bit[dest] << 3), val & 0xFF], 2];
+                }
+                if (dest in reg_map_8bit && src === '(HL)') {
+                    return [[0b01000110 | (reg_map_8bit[dest] << 3)], 1];
+                }
+                if (dest === '(HL)' && src in reg_map_8bit) {
+                    return [[0b01110000 | reg_map_8bit[src]], 1];
+                }
+                if (dest === '(HL)') {
+                    const val = parse_expr(src, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 2];
+                    return [[0x36, val & 0xFF], 2];
+                }
+                if (dest === 'A') {
+                    if (src === '(BC)') return [[0x0A], 1];
+                    if (src === '(DE)') return [[0x1A], 1];
+                    if (src.startsWith('(') && src.endsWith(')')) {
+                        const addr = parse_expr(src.slice(1, -1), location_counter, pass_num);
+                        if (pass_num === 1) return [[], 3];
+                        return [[0x3A, addr & 0xFF, (addr >> 8) & 0xFF], 3];
+                    }
+                }
+                if (dest.startsWith('(') && dest.endsWith(')') && src === 'A') {
+                    const addr = parse_expr(dest.slice(1, -1), location_counter, pass_num);
+                    if (pass_num === 1) return [[], 3];
+                    return [[0x32, addr & 0xFF, (addr >> 8) & 0xFF], 3];
+                }
+                if (dest === '(BC)' && src === 'A') return [[0x02], 1];
+                if (dest === '(DE)' && src === 'A') return [[0x12], 1];
+                if (reg_map_16bit.hasOwnProperty(dest) && !['IX', 'IY'].includes(dest)) {
+                    const val = parse_expr(src, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 3];
+                    return [[0x01 | (reg_map_16bit[dest] << 4), val & 0xFF, (val >> 8) & 0xFF], 3];
+                }
+                if (ix_iy_map.hasOwnProperty(dest)) {
+                    const val = parse_expr(src, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 4];
+                    return [[ix_iy_map[dest], 0x21, val & 0xFF, (val >> 8) & 0xFF], 4];
+                }
+                if (dest.startsWith('(') && dest.endsWith(')') && src in reg_map_16bit) {
+                    const addr = parse_expr(dest.slice(1, -1), location_counter, pass_num);
+                    if (pass_num === 1) return [[], 4];
+                    return [[0xED, 0x43 | (reg_map_16bit[src] << 4), addr & 0xFF, (addr >> 8) & 0xFF], 4];
+                }
+                if (dest === 'SP') {
+                    if (src === 'HL') return [[0xF9], 1];
+                    if (src === 'IX') return [[0xDD, 0xF9], 2];
+                    if (src === 'IY') return [[0xFD, 0xF9], 2];
+                }
+                if (dest in reg_map_8bit && src.startsWith('(') && src.endsWith(')') && src.includes('IX') || src.includes('IY')) {
+                    const m = src.slice(1, -1).match(/(IX|IY)([+-]\d+)/);
+                    if (m) {
+                        const idx_reg = m[1];
+                        const disp = parseInt(m[2]);
+                        if (disp < -128 || disp > 127) throw new Error("Index displacement out of range");
+                        if (pass_num === 1) return [[], 4];
+                        const r = reg_map_8bit[dest];
+                        return [[ix_iy_map[idx_reg], 0x46 | (r << 3), disp & 0xFF], 3];
+                    }
+                }
+                break;
+            case 'JR':
+                if (num_parts === 1) {
+                    const addr = parse_expr(parts[0], location_counter, pass_num);
+                    if (pass_num === 1) return [[], 2];
+                    const offset = addr - (location_counter + 2);
+                    if (offset < -128 || offset > 127) throw new Error("JR offset out of range");
+                    return [[0x18, offset & 0xFF], 2];
+                } else if (num_parts === 2) {
+                    const [cond, addr_str] = parts;
+                    if (!rel_jump_cond_map.hasOwnProperty(cond)) throw new Error("Invalid condition for JR");
+                    const addr = parse_expr(addr_str, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 2];
+                    const offset = addr - (location_counter + 2);
+                    if (offset < -128 || offset > 127) throw new Error("JR offset out of range");
+                    return [[0x20 | (rel_jump_cond_map[cond] << 3), offset & 0xFF], 2];
+                }
+                break;
+            case 'JP':
+                if (num_parts === 1) {
+                    const addr = parse_expr(parts[0], location_counter, pass_num);
+                    if (pass_num === 1) return [[], 3];
+                    return [[0xC3, addr & 0xFF, (addr >> 8) & 0xFF], 3];
+                } else if (num_parts === 2) {
+                    const [cond, addr_str] = parts;
+                    if (!abs_jump_cond_map.hasOwnProperty(cond)) throw new Error("Invalid condition for JP");
+                    const addr = parse_expr(addr_str, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 3];
+                    return [[0xC2 | (abs_jump_cond_map[cond] << 3), addr & 0xFF, (addr >> 8) & 0xFF], 3];
+                }
+                break;
+            case 'CALL':
+                if (num_parts === 1) {
+                    const addr = parse_expr(parts[0], location_counter, pass_num);
+                    if (pass_num === 1) return [[], 3];
+                    return [[0xCD, addr & 0xFF, (addr >> 8) & 0xFF], 3];
+                } else if (num_parts === 2) {
+                    const [cond, addr_str] = parts;
+                    if (!abs_jump_cond_map.hasOwnProperty(cond)) throw new Error("Invalid condition for CALL");
+                    const addr = parse_expr(addr_str, location_counter, pass_num);
+                    if (pass_num === 1) return [[], 3];
+                    return [[0xC4 | (abs_jump_cond_map[cond] << 3), addr & 0xFF, (addr >> 8) & 0xFF], 3];
+                }
+                break;
+            case 'RET':
+                if (operands.trim() === '') {
+                    return [[0xC9], 1];
+                } else if (num_parts === 1) {
+                    const cond = parts[0];
+                    if (!abs_jump_cond_map.hasOwnProperty(cond)) throw new Error("Invalid condition for RET");
+                    return [[0xC0 | (abs_jump_cond_map[cond] << 3)], 1];
+                }
+                break;
+            case 'PUSH':
+            case 'POP':
+                if (num_parts !== 1) throw new Error(`${mnemonic} requires one operand.`);
+                const reg_pp = parts[0];
+                if (!reg_map_16bit_push_pop.hasOwnProperty(reg_pp)) throw new Error(`Invalid register for ${mnemonic}: ${reg_pp}`);
+                if (mnemonic === 'PUSH') {
+                    return [[0xC5 | (reg_map_16bit_push_pop[reg_pp] << 4)], 1];
+                } else {
+                    return [[0xC1 | (reg_map_16bit_push_pop[reg_pp] << 4)], 1];
+                }
+            case 'EXX':
+                if (operands.trim() !== '') throw new Error("EXX does not take operands.");
+                return [[0xD9], 1];
+            case 'DAA':
+                if (operands.trim() !== '') throw new Error("DAA does not take operands.");
+                return [[0x27], 1];
+            case 'CPL':
+                if (operands.trim() !== '') throw new Error("CPL does not take operands.");
+                return [[0x2F], 1];
+            case 'INC':
+            case 'DEC':
+                if (num_parts !== 1) throw new Error(`${mnemonic} requires one operand.`);
+                const reg_incdec = parts[0];
+                if (reg_map_8bit.hasOwnProperty(reg_incdec)) {
+                    const op_base = mnemonic === 'INC' ? 0b00000100 : 0b00000101;
+                    return [[op_base | (reg_map_8bit[reg_incdec] << 3)], 1];
+                }
+                if (reg_map_16bit.hasOwnProperty(reg_incdec)) {
+                    const op_base = mnemonic === 'INC' ? 0b00000011 : 0b00001011;
+                    return [[op_base | (reg_map_16bit[reg_incdec] << 4)], 1];
+                }
+                break;
+            case 'AND': case 'OR': case 'XOR': case 'CP':
+            case 'ADD': case 'SUB': case 'ADC': case 'SBC':
+                if (num_parts === 1) {
+                    const op = parts[0];
+                    if (reg_map_8bit.hasOwnProperty(op)) {
+                        const op_base = { 'AND': 0xA0, 'XOR': 0xA8, 'OR': 0xB0, 'CP': 0xB8, 'ADD': 0x80, 'SUB': 0x90, 'ADC': 0x88, 'SBC': 0x98 };
+                        return [[op_base[mnemonic] | reg_map_8bit[op]], 1];
+                    } else if (op === '(HL)') {
+                        const op_base = { 'AND': 0xA6, 'XOR': 0xAE, 'OR': 0xB6, 'CP': 0xBE, 'ADD': 0x86, 'SUB': 0x96, 'ADC': 0x8E, 'SBC': 0x9E };
+                        return [[op_base[mnemonic]], 1];
+                    } else {
+                        const val = parse_expr(op, location_counter, pass_num);
+                        if (pass_num === 1) return [[], 2];
+                        const op_base_imm = { 'AND': 0xE6, 'XOR': 0xEE, 'OR': 0xF6, 'CP': 0xFE, 'ADD': 0xC6, 'SUB': 0xD6, 'ADC': 0xCE, 'SBC': 0xDE };
+                        return [[op_base_imm[mnemonic], val & 0xFF], 2];
+                    }
+                } else if (num_parts === 2) {
+                    const [dest_op, src_op] = parts;
+                    if (mnemonic === 'ADD' && dest_op === 'HL' && reg_map_16bit.hasOwnProperty(src_op)) {
+                        return [[0x09 | (reg_map_16bit[src_op] << 4)], 1];
+                    }
+                }
+                break;
+            case 'RST':
+                if (operands.trim() === '') throw new Error("RST requires an operand.");
+                const addr = parse_expr(operands, location_counter, pass_num);
+                const valid_rst_addrs = [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38];
+                if (!valid_rst_addrs.includes(addr)) {
+                    throw new Error(`Invalid restart address for RST: ${hex(addr)}`);
+                }
+                const opcode = 0xC7 | addr;
+                return [[opcode], 1];
+            case 'DI':
+            case 'EI':
+                if (operands.trim() !== '') throw new Error(`${mnemonic} does not take operands.`);
+                return [[mnemonic === 'DI' ? 0xF3 : 0xFB], 1];
+            case 'NOP':
+                if (operands.trim() !== '') throw new Error("NOP does not take operands.");
+                return [[0x00], 1];
+            case 'HALT':
+                if (operands.trim() !== '') throw new Error("HALT does not take operands.");
+                return [[0x76], 1];
+        }
+
+        throw new Error(`Unknown mnemonic or invalid operands: ${mnemonic} ${operands}`);
+    }
+
+    /**
+     * The main assembler function that performs a two-pass assembly.
+     * @param {string} source_code The assembly source code.
+     * @param {number} pass_num The current pass number (1 or 2).
+     * @returns {any} The final location counter for pass 1, or the assembled machine code for pass 2.
+     * @throws {Error} If any assembly errors occur.
+     */
+    function assemble(source_code, pass_num) {
+        const lines = source_code.split('\n');
+        let location_counter = 0;
+        let assembled_code = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const original_line = lines[i];
+            let line = original_line.trim();
+
+            if (line.includes(';')) {
+                line = line.substring(0, line.indexOf(';'));
+            }
+            if (!line) continue;
+
+            const line_match = line.match(/^\s*(?:(\w+):)?\s*(?:(\w+))?\s*(.*)$/i);
+            if (!line_match) continue;
+            
+            let [_, label, mnemonic, operands] = line_match.groups();
+            if (label) label = label.toUpperCase();
+            if (mnemonic) mnemonic = mnemonic.toUpperCase();
+            if (operands) operands = operands.trim();
+
+            if (pass_num === 1 && label) {
+                if (symbol_table.hasOwnProperty(label)) {
+                    throw new Error(`Duplicate label: ${label} on line ${i + 1}`);
+                }
+                symbol_table[label] = location_counter;
+            }
+
+            if (mnemonic === 'DB') {
+                const items = operands.split(/(?<!['"]),(?!['"])/).map(item => item.trim());
+                for (const item of items) {
+                    if (item.startsWith('"') && item.endsWith('"')) {
+                        const str_val = item.slice(1, -1);
+                        location_counter += str_val.length;
+                        if (pass_num === 2) {
+                            for (const char of str_val) {
+                                assembled_code.push(char.charCodeAt(0));
+                            }
+                        }
+                    } else {
+                        const value = parse_expr(item, location_counter, pass_num);
+                        location_counter += 1;
+                        if (pass_num === 2) {
+                            assembled_code.push(value & 0xFF);
+                        }
+                    }
+                }
+            } else if (mnemonic === 'DW') {
+                const values = operands.split(',').map(v => parse_expr(v.trim(), location_counter, pass_num));
+                location_counter += values.length * 2;
+                if (pass_num === 2) {
+                    for (const v of values) {
+                        assembled_code.push(v & 0xFF, (v >> 8) & 0xFF);
+                    }
+                }
+            } else if (mnemonic === 'DEFM') {
+                if (operands.startsWith('"') && operands.endsWith('"')) {
+                    const str_val = operands.slice(1, -1);
+                    location_counter += str_val.length;
+                    if (pass_num === 2) {
+                        for (const char of str_val) {
+                            assembled_code.push(char.charCodeAt(0));
+                        }
+                    }
+                } else {
+                    throw new Error("DEFM requires a quoted string operand.");
+                }
+            } else if (mnemonic === 'DEFS') {
+                const parts = operands.split(',').map(p => p.trim());
+                const size = parse_expr(parts[0], location_counter, pass_num);
+                const fill_value = parts.length > 1 ? parse_expr(parts[1], location_counter, pass_num) : 0x00;
+                location_counter += size;
+                if (pass_num === 2) {
+                    for (let j = 0; j < size; j++) {
+                        assembled_code.push(fill_value & 0xFF);
+                    }
+                }
+            } else if (mnemonic === 'EQU' && label) {
+                const value = parse_expr(operands, location_counter, pass_num);
+                if (pass_num === 1) {
+                    symbol_table[label] = value;
+                }
+            } else if (mnemonic) {
+                try {
+                    const [opcodes, size] = get_opcode(mnemonic, operands, location_counter, pass_num);
+                    location_counter += size;
+                    if (pass_num === 2) {
+                        assembled_code.push(...opcodes);
+                    }
+                } catch (e) {
+                    throw new Error(`Line ${i + 1}: ${original_line}\nError: ${e.message}`);
+                }
+            }
+        }
+
+        if (pass_num === 1) {
+            return location_counter;
+        } else {
+            return assembled_code;
+        }
+    }
+
+    /**
+     * Handles the assembly process when the button is clicked.
+     */
+    async function handleAssemble() {
+        logOutput.textContent = '';
+        symbolTableOutput.textContent = '';
+        machineCodeOutput.textContent = '';
+        symbol_table = {};
+
+        try {
+            // Pass 1: Build symbol table
+            logOutput.textContent += 'Pass 1: Building symbol table...\n';
+            assemble(sourceCodeElem.value, 1);
+            logOutput.textContent += 'Pass 1 complete. Symbol table built.\n\n';
+
+            // Display the symbol table
+            let tableText = '';
+            const sortedSymbols = Object.keys(symbol_table).sort();
+            sortedSymbols.forEach(key => {
+                tableText += `${key.padEnd(20)} = 0x${symbol_table[key].toString(16).toUpperCase().padStart(4, '0')}\n`;
+            });
+            symbolTableOutput.textContent = tableText;
+
+            // Pass 2: Generate machine code
+            logOutput.textContent += 'Pass 2: Generating machine code...\n';
+            const machineCode = assemble(sourceCodeElem.value, 2);
+            logOutput.textContent += 'Pass 2 complete. Machine code generated.\n';
+
+            // Display machine code
+            const hexString = machineCode.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+            machineCodeOutput.textContent = hexString.replace(/(.{48})/g, '$1\n');
+        } catch (e) {
+            logOutput.textContent += `Assembly failed:\n${e.message}\n`;
+        }
+    }
+
+    assembleButton.addEventListener('click', handleAssemble);
+});
+</script>
+
+</body>
+</html>
