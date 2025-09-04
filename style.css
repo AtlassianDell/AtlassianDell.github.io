@@ -1,0 +1,87 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    color: #333;
+    line-height: 1.6;
+    margin: 0;
+    padding: 20px;
+}
+
+.header-container, .content-container, .footer-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header-container {
+    text-align: center;
+    border-bottom: 2px solid #ccc;
+    margin-bottom: 20px;
+}
+
+.header-container h1 {
+    font-size: 2.5em;
+    margin-bottom: 5px;
+}
+
+.header-container p {
+    font-style: italic;
+    color: #666;
+}
+
+.main-nav ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.main-nav li a {
+    text-decoration: none;
+    color: #007bff;
+    font-weight: bold;
+}
+
+.main-nav li a:hover {
+    text-decoration: underline;
+}
+
+.blog-list {
+    list-style: none;
+    padding: 0;
+}
+
+.blog-list li {
+    margin-bottom: 10px;
+}
+
+a {
+    color: #007bff;
+}
+
+a:hover {
+    text-decoration: none;
+}
+
+hr {
+    border: 0;
+    height: 1px;
+    background: #ccc;
+    margin: 2em 0;
+}
+
+.footer-container {
+    text-align: center;
+    font-size: 0.9em;
+    color: #888;
+    border-top: 1px solid #ddd;
+    margin-top: 40px;
+    padding-top: 20px;
+}
+
+/* Specific styling for blog post page */
+.blog-post h1 {
+    font-size: 2em;
+    text-align: left;
+}
